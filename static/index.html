@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>空手 BAR 監査画面</title>
+<style>
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+  body {
+    margin: 0; padding: 0; background: #111; color: #eee;
+    font-family: -apple-system, "Hiragino Sans", sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  #warning-bar {
+    background: #c0392b; color: #fff; text-align: center;
+    padding: 10px; font-weight: bold; display: none;
+  }
+  #warning-bar.show { display: block; }
+
+  #sync-bar {
+    text-align: center; padding: 8px; font-size: 14px; font-weight: bold;
+    display: none;
+  }
+  #sync-bar.running { display: block; background: #7a1f1f; color: #fff; }
+  #sync-bar.stopped { display: block; background: #1f5c2e; color: #fff; }
+
+  #slot-bar {
+    display: flex; gap: 8px; padding: 10px; background: #1c1c1c;
+    overflow-x: auto;
+  }
+  .slot-btn {
+    flex: 0 0 auto; padding: 14px 20px; background: #333; color: #eee;
+    border: 2px solid #444; border-radius: 8px; font-size: 16px;
+  }
+  .slot-btn.active { background: #2a6fdb; border-color: #4a8fff; }
+
+  #saved-toggle-row {
+    display: flex; padding: 0 10px 10px; background: #1c1c1c;
+  }
+  #btn-toggle-saved {
+    background: #2a2a2a; color: #ccc; border: 1px solid #444;
+    border-radius: 6px; padding: 8px 14px; font-size: 14px;
+  }
+  #saved-bar {
+    display: none; gap: 8px; padding: 0 10px 10px; background: #1c1c1c;
+    overflow-x: auto;
+  }
+  #saved-bar.show { display: flex; }
+  .saved-btn {
+    flex: 0 0 auto; padding: 12px 16px; background: #2a3a2a; color: #eee;
+    border: 2px solid #3a5a3a; border-radius: 8px; font-size: 14px;
+  }
+  .saved-btn.active { background: #1f7a3a; border-color: #2fae55; }
+  #saved-empty {
+    color: #666; font-size: 13px; padding: 4px 4px;
+  }
+
+  #video-area {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    position: relative; background: #000; touch-action: none;
+  }
+  #player { max-width: 100%; max-height: 100%; }
+  #placeholder { color: #666; font-size: 20px; }
+
+  #controls {
+    background: #1c1c1c; padding: 14px; display: flex;
+    align-items: center; justify-content: center; gap: 20px;
+  }
+  .ctrl-btn {
+    background: #2a2a2a; color: #eee; border: 1px solid #444;
+    border-radius: 50%; width: 56px; height: 56px; font-size: 22px;
+  }
+  #btn-save {
+    background: #1f5c2e; color: #fff; border: 1px solid #2fae55;
+    border-radius: 8px; padding: 0 18px; height: 56px; font-size: 15px;
+    display: none;
+  }
+  #btn-save.show { display: inline-block; }
+  #btn-save:disabled { opacity: 0.6; }
+  #frame-info {
+    font-size: 15px; color: #aaa; min-width: 160px; text-align: center;
+  }
+  #swipe-hint {
+    text-align: center; color: #555; font-size: 13px; padding: 6px;
+    background: #1c1c1c;
+  }
+</style>
+</head>
+<body>
+
+  <div id="warning-bar"></div>
+  <div id="sync-bar"></div>
+
+  <div id="slot-bar"></div>
+
+  <div id="saved-toggle-row">
+    <button id="btn-toggle-saved">保存済み一覧を表示 (0件)</button>
+  </div>
+  <div id="saved-bar"></div>
+
+  <div id="video-area">
+    <div id="placeholder">クリップを選択してください</div>
+    <video id="player" playsinline muted></video>
+  </div>
+
+  <div id="swipe-hint">動画エリアを左右にスワイプ → コマ送り</div>
+
+  <div id="controls">
+    <button class="ctrl-btn" id="btn-prev">⏮</button>
+    <button class="ctrl-btn" id="btn-play">▶</button>
+    <button class="ctrl-btn" id="btn-next">⏭</button>
+    <button id="btn-save">★ このクリップを保存</button>
+  </div>
+  <div id="frame-info">-- / --</div>
+
+<script>
+const FPS = 60;
+const FRAME_DUR = 1 / FPS;
+const PIXELS_PER_FRAME = 12; // この距離スワイプしたら1フレーム進む/戻る
+
+const player = document.getElementById('player');
+const placeholder = document.getElementById('placeholder');
+const slotBar = document.getElementById('slot-bar');
+const warningBar = document.getElementById('warning-bar');
+const frameInfo = document.getElementById('frame-info');
+const btnPlay = document.getElementById('btn-play');
+const videoArea = document.getElementById('video-area');
+const btnSave = document.getElementById('btn-save');
+const btnToggleSaved = document.getElementById('btn-toggle-saved');
+const savedBar = document.getElementById('saved-bar');
+
+let currentClips = [];
+let isPlaying = false;
+let currentFilename = null;   // 現在プレイヤーに読み込んでいるファイル名
+let currentIsSaved = false;   // それが既に永久保存済み(data/saved/)のものか
+let savedList = [];
+let savedListVisible = false;
+
+function updateFrameInfo() {
+  const frame = Math.round(player.currentTime / FRAME_DUR);
+  const totalFrames = Math.round((player.duration || 0) / FRAME_DUR);
+  frameInfo.textContent = `frame ${frame} / ${totalFrames}`;
+}
+
+function loadClip(filename, btn, isSaved) {
+  document.querySelectorAll('.slot-btn, .saved-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  placeholder.style.display = 'none';
+  player.src = (isSaved ? '/saved/' : '/clips/') + filename;
+  player.style.display = 'block';
+  player.pause();
+  isPlaying = false;
+  btnPlay.textContent = '▶';
+  player.addEventListener('loadedmetadata', updateFrameInfo, { once: true });
+
+  currentFilename = filename;
+  currentIsSaved = !!isSaved;
+  // 既に永久保存済みのクリップは再保存の必要がないため、保存ボタンは
+  // 「まだ保存していない現在のクリップ」を見ているときだけ表示する
+  btnSave.classList.toggle('show', !currentIsSaved);
+  btnSave.disabled = false;
+  btnSave.textContent = '★ このクリップを保存';
+}
+
+async function refreshClips() {
+  try {
+    const res = await fetch('/api/clips');
+    const clips = await res.json();
+    currentClips = clips;
+    slotBar.innerHTML = '';
+    clips.forEach((c, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'slot-btn';
+      btn.textContent = (i === 0 ? '最新: ' : '') + c.label;
+      btn.onclick = () => loadClip(c.filename, btn, false);
+      slotBar.appendChild(btn);
+    });
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function refreshSaved() {
+  try {
+    const res = await fetch('/api/saved');
+    savedList = await res.json();
+    btnToggleSaved.textContent =
+      (savedListVisible ? '保存済み一覧を隠す' : '保存済み一覧を表示') + ` (${savedList.length}件)`;
+    if (!savedListVisible) return;
+    renderSavedBar();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function renderSavedBar() {
+  savedBar.innerHTML = '';
+  if (savedList.length === 0) {
+    const empty = document.createElement('div');
+    empty.id = 'saved-empty';
+    empty.textContent = 'まだ保存済みクリップはありません';
+    savedBar.appendChild(empty);
+    return;
+  }
+  savedList.forEach((s) => {
+    const btn = document.createElement('button');
+    btn.className = 'saved-btn';
+    if (s.filename === currentFilename && currentIsSaved) btn.classList.add('active');
+    btn.textContent = `${s.saved_at} (${s.court})`;
+    btn.onclick = () => loadClip(s.filename, btn, true);
+    savedBar.appendChild(btn);
+  });
+}
+
+btnToggleSaved.onclick = () => {
+  savedListVisible = !savedListVisible;
+  savedBar.classList.toggle('show', savedListVisible);
+  refreshSaved();
+};
+
+btnSave.onclick = async () => {
+  if (!currentFilename || currentIsSaved) return;
+  btnSave.disabled = true;
+  btnSave.textContent = '保存中...';
+  try {
+    const res = await fetch(`/api/clips/${encodeURIComponent(currentFilename)}/save`, { method: 'POST' });
+    const result = await res.json();
+    if (res.ok && result.ok) {
+      btnSave.textContent = '✓ 保存しました';
+      currentIsSaved = true;
+      await refreshSaved();
+    } else {
+      btnSave.textContent = '✗ 保存失敗';
+      btnSave.disabled = false;
+      console.error(result.error || 'save failed');
+    }
+  } catch (e) {
+    btnSave.textContent = '✗ 保存失敗';
+    btnSave.disabled = false;
+    console.error(e);
+  }
+};
+
+async function refreshStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const status = await res.json();
+    if (!status.recording_ok) {
+      warningBar.textContent = '⚠ ' + status.message;
+      warningBar.classList.add('show');
+    } else {
+      warningBar.classList.remove('show');
+    }
+
+    const syncBar = document.getElementById('sync-bar');
+    if (status.timer_sync_state === 'running') {
+      syncBar.textContent = '🔴 録画中(実際のタイマー表示と一致しているか確認してください)';
+      syncBar.className = 'running';
+    } else if (status.timer_sync_state === 'stopped') {
+      syncBar.textContent = '🟢 スタンバイ';
+      syncBar.className = 'stopped';
+    } else {
+      syncBar.className = '';
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// --- 再生/一時停止 ---
+btnPlay.onclick = () => {
+  if (isPlaying) {
+    player.pause();
+    btnPlay.textContent = '▶';
+  } else {
+    player.play();
+    btnPlay.textContent = '⏸';
+  }
+  isPlaying = !isPlaying;
+};
+
+document.getElementById('btn-prev').onclick = () => stepFrame(-1);
+document.getElementById('btn-next').onclick = () => stepFrame(1);
+
+function stepFrame(n) {
+  player.pause();
+  isPlaying = false;
+  btnPlay.textContent = '▶';
+  let t = player.currentTime + n * FRAME_DUR;
+  t = Math.max(0, Math.min(player.duration || 0, t));
+  player.currentTime = t;
+}
+
+player.addEventListener('timeupdate', updateFrameInfo);
+
+// --- スワイプでコマ送り ---
+let touchStartX = null;
+let accumulatedPixels = 0;
+
+videoArea.addEventListener('touchstart', (e) => {
+  if (!player.src) return;
+  player.pause();
+  isPlaying = false;
+  btnPlay.textContent = '▶';
+  touchStartX = e.touches[0].clientX;
+  accumulatedPixels = 0;
+}, { passive: true });
+
+videoArea.addEventListener('touchmove', (e) => {
+  if (touchStartX === null) return;
+  const x = e.touches[0].clientX;
+  const delta = x - touchStartX;
+  touchStartX = x;
+  accumulatedPixels += delta;
+
+  while (Math.abs(accumulatedPixels) >= PIXELS_PER_FRAME) {
+    const dir = accumulatedPixels > 0 ? 1 : -1;
+    stepFrame(dir);
+    accumulatedPixels -= dir * PIXELS_PER_FRAME;
+  }
+}, { passive: true });
+
+videoArea.addEventListener('touchend', () => {
+  touchStartX = null;
+  accumulatedPixels = 0;
+});
+
+// マウスでも動作確認できるように(PCブラウザでのテスト用)
+let mouseDown = false;
+videoArea.addEventListener('mousedown', (e) => {
+  if (!player.src) return;
+  mouseDown = true;
+  touchStartX = e.clientX;
+  accumulatedPixels = 0;
+  player.pause();
+  isPlaying = false;
+});
+videoArea.addEventListener('mousemove', (e) => {
+  if (!mouseDown || touchStartX === null) return;
+  const delta = e.clientX - touchStartX;
+  touchStartX = e.clientX;
+  accumulatedPixels += delta;
+  while (Math.abs(accumulatedPixels) >= PIXELS_PER_FRAME) {
+    const dir = accumulatedPixels > 0 ? 1 : -1;
+    stepFrame(dir);
+    accumulatedPixels -= dir * PIXELS_PER_FRAME;
+  }
+});
+window.addEventListener('mouseup', () => { mouseDown = false; });
+
+refreshClips();
+refreshStatus();
+refreshSaved();
+setInterval(refreshClips, 3000);
+setInterval(refreshStatus, 2000);
+setInterval(refreshSaved, 5000);
+</script>
+</body>
+</html>
