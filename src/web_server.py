@@ -5,10 +5,16 @@ iPad(またはPC自身のブラウザ)からLAN経由で以下にアクセスで
   GET /                  監査用画面(index.html)
   GET /api/clips         現在保持中のクリップ一覧(JSON)
   GET /clips/<filename>  クリップ動画本体(mp4)
-  GET /api/status        カメラ警告状態(録画が止まっていないか)
+  GET /api/status        カメラ警告状態(録画が止まっていないか)・現在の録画モード
   POST /api/clips/<filename>/save  指定クリップを永久保存(FIFO対象外)にする
   GET /api/saved         永久保存済みクリップ一覧(JSON)
   GET /saved/<filename>  永久保存済みクリップ動画本体(mp4)
+  POST /api/saved/delete 永久保存済みクリップの一括削除
+  GET /api/takes         テイクモードで録画したクリップ一覧(JSON)
+  GET /takes/<filename>  テイククリップ動画本体(mp4)
+  POST /api/takes/delete テイククリップの一括削除
+  GET /api/mode          現在の録画モード(replay/take)
+  POST /api/mode         録画モードを切り替える(録画中は不可)
 
 「やめ」操作自体はPC側の記録員が行うため、iPad側には
 クリップを追加・削除するAPIは設けない(閲覧専用)。ただし
@@ -20,10 +26,12 @@ iPad(またはPC自身のブラウザ)からLAN経由で以下にアクセスで
 
 import logging
 import os
-from flask import Flask, jsonify, send_from_directory, render_template
+from flask import Flask, jsonify, request, send_from_directory, render_template
 
-from config import CLIPS_DIR, SAVED_DIR, COURT_NAME
+from config import CLIPS_DIR, SAVED_DIR, TAKE_DIR, COURT_NAME
 import saved_clips
+import take_recorder as take_recorder_module
+import recording_mode
 import audit_log
 
 app = Flask(__name__, static_folder="../static", template_folder="../static")
@@ -40,6 +48,14 @@ def register(clip_extractor, recorder=None):
     global _clip_extractor, _recorder
     _clip_extractor = clip_extractor
     _recorder = recorder
+
+
+def _is_running():
+    """現在タイマーが『動作中』かどうか(モード切替の可否判定に使う)。
+    --input-mode enter 使用時などタイマー追跡が無い場合はFalse扱いにする。"""
+    if _timer_state_source is None:
+        return False
+    return _timer_state_source() == "running"
 
 
 def register_timer_state_source(get_state_fn):
@@ -109,6 +125,56 @@ def saved_file(filename):
     return send_from_directory(SAVED_DIR, filename)
 
 
+@app.route("/api/saved/delete", methods=["POST"])
+def api_saved_delete():
+    body = request.get_json(silent=True) or {}
+    filenames = body.get("filenames") or []
+    if not isinstance(filenames, list) or not filenames:
+        return jsonify({"ok": False, "error": "filenamesを指定してください"}), 400
+    saved_clips.delete_saved_clips(filenames)
+    audit_log.log_event("saved_clips_deleted", filenames=filenames)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/takes")
+def api_takes():
+    return jsonify(take_recorder_module.list_takes())
+
+
+@app.route("/takes/<path:filename>")
+def take_file(filename):
+    return send_from_directory(TAKE_DIR, filename)
+
+
+@app.route("/api/takes/delete", methods=["POST"])
+def api_takes_delete():
+    body = request.get_json(silent=True) or {}
+    filenames = body.get("filenames") or []
+    if not isinstance(filenames, list) or not filenames:
+        return jsonify({"ok": False, "error": "filenamesを指定してください"}), 400
+    take_recorder_module.delete_takes(filenames)
+    audit_log.log_event("takes_deleted", filenames=filenames)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/mode")
+def api_mode_get():
+    return jsonify({"mode": recording_mode.get_mode()})
+
+
+@app.route("/api/mode", methods=["POST"])
+def api_mode_post():
+    body = request.get_json(silent=True) or {}
+    mode = body.get("mode")
+    if mode not in (recording_mode.REPLAY, recording_mode.TAKE):
+        return jsonify({"ok": False, "error": "modeはreplayまたはtakeを指定してください"}), 400
+    changed = recording_mode.set_mode(mode, running=_is_running())
+    if not changed:
+        return jsonify({"ok": False, "error": "録画中はモードを切り替えられません"}), 400
+    audit_log.log_event("mode_changed", mode=mode)
+    return jsonify({"ok": True, "mode": mode})
+
+
 @app.route("/api/status")
 def api_status():
     result = dict(_status)
@@ -116,6 +182,7 @@ def api_status():
         result["timer_sync_state"] = _timer_state_source()
     else:
         result["timer_sync_state"] = None
+    result["mode"] = recording_mode.get_mode()
     return jsonify(result)
 
 

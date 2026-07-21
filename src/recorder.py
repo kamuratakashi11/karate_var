@@ -50,6 +50,9 @@ class SegmentRingBufferRecorder:
         self._start_time = None
         self._last_frame_time = None
         self._frame_count = 0
+        # テイクモード録画中は、開始〜終了の区間を丸ごと切り出す必要があるため、
+        # 通常のBUFFER_SEGMENTS超過削除を一時的に止めておく必要がある。
+        self._cleanup_paused = False
 
     def get_health(self):
         """中央監視ダッシュボード向けの死活情報を返す"""
@@ -128,6 +131,9 @@ class SegmentRingBufferRecorder:
     def _cleanup_loop(self):
         """BUFFER_SEGMENTS個を超えた古いセグメントファイルを削除し続ける"""
         while self._running:
+            if self._cleanup_paused:
+                time.sleep(SEGMENT_SECONDS)
+                continue
             # 切り出し処理(clip_extractor.py)が同時に読み込み中でないことを保証してから削除する
             with buffer_lock:
                 segments = sorted(glob.glob(os.path.join(BUFFER_DIR, "seg_*.ts")))
@@ -141,6 +147,18 @@ class SegmentRingBufferRecorder:
                         except OSError:
                             pass
             time.sleep(SEGMENT_SECONDS)
+
+    def pause_cleanup(self):
+        """
+        テイクモードの録画開始時に呼ぶ。開始〜終了の区間全体を後で切り出せるよう、
+        通常のBUFFER_SEGMENTS超過削除を一時停止する(TAKE_MAX_DURATION_SECONDSの
+        安全キャップにより、際限なく溜まり続けることはない)。
+        """
+        self._cleanup_paused = True
+
+    def resume_cleanup(self):
+        """テイクの切り出し完了後に呼ぶ。通常のFIFO削除を再開する"""
+        self._cleanup_paused = False
 
     def stop(self):
         # 先にcapture_loopを止めてから(=書き込みをやめてから)stdinを閉じる。

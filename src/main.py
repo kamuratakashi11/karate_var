@@ -22,8 +22,11 @@ import urllib.request
 from camera_source import MockCameraSource, RealCameraSource
 from recorder import SegmentRingBufferRecorder
 from clip_extractor import ClipExtractor
+from take_recorder import TakeRecorder
+import recording_mode
 import web_server
 import audit_log
+from config import TAKE_MAX_DURATION_SECONDS
 
 
 def _wait_for_web_server(port, timeout_sec=15):
@@ -59,6 +62,8 @@ def main():
         source = RealCameraSource(args.camera)
 
     extractor = ClipExtractor()
+    take_recorder = TakeRecorder()
+    take_cap_timer = None  # テイクの最大録画時間キャップ用(threading.Timer)
 
     def on_warning(msg):
         print(f"[警告] {msg}")
@@ -94,7 +99,35 @@ def main():
         web_server.set_warning(message)
         audit_log.log_event("web_server_start_failed", port=args.port)
 
+    def cancel_take_cap_timer():
+        nonlocal take_cap_timer
+        if take_cap_timer is not None:
+            take_cap_timer.cancel()
+            take_cap_timer = None
+
+    def finish_take(auto_stopped=False):
+        cancel_take_cap_timer()
+        try:
+            entry = take_recorder.stop_take()
+            recorder.resume_cleanup()
+            print(f"[テイク] クリップ確定: {entry['filename']} ({entry['duration_sec']}秒)")
+            audit_log.log_event("take_created", auto_stopped=auto_stopped, **entry)
+            if auto_stopped:
+                msg = (f"テイクモードで最大録画時間({int(TAKE_MAX_DURATION_SECONDS)}秒)に達したため、"
+                       "自動的に録画を終了しました。")
+                print(f"[警告] {msg}")
+                web_server.set_warning(msg)
+                audit_log.log_event("take_auto_stopped_max_duration")
+        except Exception as e:
+            recorder.resume_cleanup()
+            print(f"[エラー] テイク抽出に失敗しました: {e}")
+            audit_log.log_event("take_error", error=str(e))
+
     def trigger_yame():
+        if recording_mode.get_mode() == recording_mode.TAKE:
+            if take_recorder.is_in_progress():
+                finish_take()
+            return
         try:
             clip_path = extractor.extract_on_yame()
             print(f"[やめ] クリップ確定: {clip_path}")
@@ -103,8 +136,19 @@ def main():
             print(f"[エラー] クリップ抽出に失敗しました: {e}")
             audit_log.log_event("clip_error", error=str(e))
 
+    def start_take():
+        take_recorder.start_take()
+        recorder.pause_cleanup()
+        audit_log.log_event("take_started")
+        nonlocal take_cap_timer
+        take_cap_timer = threading.Timer(TAKE_MAX_DURATION_SECONDS, lambda: finish_take(auto_stopped=True))
+        take_cap_timer.daemon = True
+        take_cap_timer.start()
+
     def on_key_event(event_type, state):
         audit_log.log_event(event_type, timer_state=state)
+        if event_type == "timer_start_detected" and recording_mode.get_mode() == recording_mode.TAKE:
+            start_take()
 
     button_listener = None
     if args.input_mode == "button":

@@ -91,3 +91,35 @@ def list_saved_clips():
     entries = [e for e in entries if os.path.exists(os.path.join(SAVED_DIR, e["filename"]))]
     entries.reverse()
     return entries
+
+
+def delete_saved_clips(filenames):
+    """
+    指定した保存済みクリップをdata/saved/とindex.jsonlの両方から削除する。
+    filenames: ファイル名のリスト(パスは含まない想定。basename化してから扱う)
+    """
+    targets = {os.path.basename(f) for f in filenames}
+
+    with _index_lock:
+        for name in targets:
+            path = os.path.join(SAVED_DIR, name)
+            if os.path.exists(path):
+                os.remove(path)
+
+        if not os.path.exists(SAVED_INDEX_PATH):
+            return
+        with open(SAVED_INDEX_PATH, encoding="utf-8") as f:
+            lines = f.readlines()
+        remaining = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                entry = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("filename") not in targets:
+                remaining.append(json.dumps(entry, ensure_ascii=False))
+        with open(SAVED_INDEX_PATH, "w", encoding="utf-8") as f:
+            f.write("\n".join(remaining) + ("\n" if remaining else ""))

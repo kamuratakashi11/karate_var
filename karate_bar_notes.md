@@ -247,3 +247,101 @@
   `main`ブランチが`https://github.com/kamuratakashi11/karate_var`と同期済み
 - ノートパソコン側ではまだ何も作業していない(次にやること:
   上記READMEの手順で`git clone`してもらい、実際に起動確認)
+
+---
+
+## ラウンド4(2026-07-21): テイクモード(型の通し録画)の追加
+
+### 目的
+
+「型は5分程度の演武全体を録画・検証したい」という要望を受け、既存の
+「F2ストップの瞬間から遡ってCLIP_DURATION_SECONDS(10秒)を切り出す」
+トリガー直前保存方式(組手向け)とは別に、F2スタート〜ストップの区間を
+まるごと1本のクリップとして保存する仕組みを追加した。空手専用ではなく
+他の部活動でも使われうるため、名称は競技名に依存しない一般的なものにした。
+
+- 既存方式 → **リプレイモード**(`replay`, 既定): 動作は完全に現状維持
+- 新規方式 → **テイクモード**(`take`): 開始〜終了を通しで録画し、
+  `data/takes/`という別枠(FIFOの対象外)に保存する
+
+### 事前確認(AskUserQuestionで確認した4点)
+
+1. 実装範囲: 「テイクモードのみ今回実装」(生徒間シェア・権限設計は次ラウンド)
+2. テイクの保持方式: 「最初から別枠の保持エリアに入れる」
+   (既存の`clips/`2枚FIFOには乗せない)
+3. 保存済みクリップ(`data/saved/`)の一括削除UI: 「含める」
+   (テイクにも同じ仕組みを適用)
+4. モード切替の方式: 「iPad画面上の単一トグルボタン」
+   (タップごとにreplay⇄takeが交互に切り替わる。物理ボタン割り当ては今回は無し)
+
+### やったこと
+
+1. `config.py`に`TAKE_DIR`(`data/takes/`)・`TAKE_INDEX_PATH`・
+   `TAKE_MAX_DURATION_SECONDS`(10分の安全キャップ)を追加
+2. `src/recording_mode.py`を新規作成。`replay`/`take`のモード状態を持つ
+   薄いスレッドセーフモジュール(`web_server.py`と`main.py`の両方から
+   参照するため独立させた)。録画中(`running`)はモード切替を拒否する
+3. `src/recorder.py`に`pause_cleanup()`/`resume_cleanup()`を追加。
+   テイク録画中はリングバッファの通常のFIFO削除(`BUFFER_SEGMENTS`超過分の
+   自動削除)を一時停止し、開始〜終了の区間全体を後で切り出せるようにした
+4. `src/take_recorder.py`を新規作成。`clip_extractor.py`と同じ
+   「バッファのTSセグメントをconcatしてtrimする」パターンを踏襲しつつ、
+   固定10秒ではなく`start_take()`〜`stop_take()`の実経過時間ぶんを
+   可変長で切り出すようにした。保護期間の概念は持たず、削除は
+   一括削除UIのみで行う設計
+5. `src/main.py`: `on_key_event`(F2スタート検知)でテイクモード中なら
+   `take_recorder.start_take()`+`recorder.pause_cleanup()`+最大時間キャップ用
+   `threading.Timer`を起動。`trigger_yame`(F2ストップ/緊急ボタン)を
+   モードで分岐し、テイクモードなら`take_recorder.stop_take()`を呼ぶように変更
+6. `src/web_server.py`に`GET/POST /api/mode`・`GET /api/takes`・
+   `GET /takes/<filename>`・`POST /api/takes/delete`・
+   `POST /api/saved/delete`を追加。`/api/status`のレスポンスに
+   現在のモードを含めるようにした
+7. `src/saved_clips.py`に`delete_saved_clips()`を追加(一括削除UI用)
+8. `static/index.html`: モード切替用の単一トグルボタンを追加。
+   保存済み一覧・テイク一覧それぞれに「編集」トグル→チェックボックス選択→
+   確認ダイアログ付きの一括削除ボタンを追加(共通ロジックは
+   `makeManagedList()`としてまとめ、2つのリストで再利用)
+9. `tests/test_take_mode.py`(新規): pause_cleanup中はバッファが
+   `BUFFER_SEGMENTS`を超えて保持され続けること、可変長の経過時間ぶんが
+   正しく切り出されること、resume_cleanup後にFIFO削除が再開すること、
+   一覧・削除APIが正しく動くことをヘッドレスで確認
+10. `tests/test_mode_api.py`(新規): `/api/mode`の切替・録画中の拒否、
+    `/api/takes`系・`/api/saved/delete`のHTTP疎通をEnd-to-Endで確認
+11. 既存の`tests/test_pipeline_mock.py`・`tests/test_save_clip.py`・
+    `tests/test_full_stack.py`が引き続き通ることを確認(リプレイモードの
+    既存ロジックには一切手を入れていないため、回帰なし)
+12. Playwright(このセッションのコンテナに事前導入済みのChromium)で
+    実際にページを操作し、モード切替ボタンのクリックでサーバー側の
+    `/api/status`のmodeが実際に切り替わること、保存済み・テイク双方の
+    一覧から実データを再生できること(video要素のsrcが正しいこと)、
+    編集モードでチェック→削除すると一覧・サーバー側の両方から消え、
+    再生中だった場合はプレイヤーがクリアされることを確認した
+    (ブラウザ環境が無いためsrc実機・iPadでの操作感の確認は未実施)
+
+### 学んだこと・次回以降への申し送り
+
+- このセッションのコンテナには当初`ffmpeg`・`opencv-python`が入っておらず、
+  `apt-get install ffmpeg`は`noble-updates`側の一部パッケージが404で
+  失敗したが、`apt-get update`後に`--no-install-recommends`を付けたら
+  通った。`pip install opencv-python-headless`はdebian管理下の`blinker`が
+  衝突して失敗したため、`--ignore-installed blinker`で回避した
+  (実機のWindows環境では起きない、このコンテナ固有の問題)
+- Playwrightは`playwright install`を実行せず、環境に事前配置された
+  `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`を
+  `executable_path`で直接指定すれば動く
+
+### 現在の状態
+
+- `data/`配下はテスト後にクリーンアップ済み
+- `data/takes/`は空の状態(index.jsonlも生成前)
+- 実機(Windows PC・実カメラ・業者のUSBボタン)でのテイクモード動作確認は
+  未実施(このセッションはコンテナ内でのMockカメラ検証のみ)
+
+### 次ラウンド以降の候補(今回は着手していない)
+
+- 生徒間シェアのUI・閲覧権限・生徒ごとの識別/タグ付け(ラウンド2から持ち越し)
+- テイクモードの物理ボタン割り当て(現状はiPad画面の単一トグルボタンのみ)
+- 実機でのテイクモード検証: 実際に5分程度の型を通しで録画し、
+  同期精度・ディスク使用量(`pause_cleanup`中の一時的な増加)・
+  `TAKE_MAX_DURATION_SECONDS`(10分)の妥当性を確認
