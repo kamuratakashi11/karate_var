@@ -40,6 +40,36 @@ ffmpeg -version
 pip install -r requirements.txt --break-system-packages
 ```
 
+## 他のPC(ノートパソコンなど)への移行
+
+このプロジェクトはGitHubで管理しています(`https://github.com/kamuratakashi11/karate_var`)。
+新しいPCにも同じ内容を持っていきたい場合は、USBコピーではなくgitで取得してください。
+
+```bash
+git clone https://github.com/kamuratakashi11/karate_var.git
+cd karate_var
+pip install -r requirements.txt --break-system-packages
+```
+
+(Python・FFmpegが未導入の場合は、上の「セットアップ」の1・2を先に行ってください)
+
+**注意点**
+
+- `data/`(録画バッファ・確定クリップ・永久保存クリップ・監査ログ)は**gitの管理対象外**です
+  (`.gitignore`で除外。映像データをそのままGitHub上に置きたくないための意図的な設計)。
+  過去に保存したクリップ自体を新しいPCに持っていきたい場合は、`data/saved/`フォルダを
+  USB等で別途手動コピーしてください。
+- `src/config.py`の設定値(`COURT_NAME`、`BUTTON_KEY_NAME`、カメラのデバイス番号など)は
+  **PCごとに実機で再確認が必要**です。特に`BUTTON_KEY_NAME`はUSBボタンの認識結果が
+  PCやUSBポートによって変わりうるため、新しいPCでも`tools/detect_keyboard_key.py`で
+  必ず確認し直してください。`COURT_NAME`は環境変数`COURT_NAME`で上書きできるため、
+  複数PCで同じ`config.py`を共有しつつコートごとに変える場合はこちらを使うと
+  gitの同期が楽になります。
+- 今後デスクトップ側で改修した内容をノートパソコン側にも反映したい場合は、
+  ノートパソコン側で `git pull` するだけで最新化できます。逆にノートパソコン側で
+  変更した場合は `git add` → `git commit` → `git push` してから、デスクトップ側で
+  `git pull` してください。
+
 ## 動作確認(カメラが届く前)
 
 ダミー映像でパイプライン全体を検証できます。
