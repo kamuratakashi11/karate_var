@@ -30,6 +30,22 @@
   #sync-bar.running { display: block; background: #7a1f1f; color: #fff; }
   #sync-bar.stopped { display: block; background: #1f5c2e; color: #fff; }
 
+  #tab-bar {
+    display: flex; flex-shrink: 0; background: #1c1c1c; border-bottom: 1px solid #333;
+  }
+  .tab-btn {
+    flex: 1; padding: 12px; font-size: 15px; font-weight: bold;
+    background: #1c1c1c; color: #888; border: none; border-bottom: 3px solid transparent;
+  }
+  .tab-btn.active { color: #eee; border-bottom-color: #2a6fdb; }
+
+  /* タブで切り替える2つのビュー。非アクティブな方はdisplay:noneで場所を取らない。
+     アクティブな方だけflex:1で残りの縦幅いっぱいに広がる(#video-viewが動画を
+     大きく表示できるようにするための対応)。 */
+  #list-view, #video-view { display: none; }
+  #list-view.active { display: block; flex: 1; min-height: 0; overflow-y: auto; }
+  #video-view.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
   #mode-bar { padding: 8px 10px 0; background: #1c1c1c; flex-shrink: 0; }
   #btn-mode-toggle {
     width: 100%; padding: 12px; font-size: 15px; font-weight: bold;
@@ -122,44 +138,53 @@
   <div id="warning-bar"></div>
   <div id="sync-bar"></div>
 
-  <div id="mode-bar">
-    <button id="btn-mode-toggle">モード: リプレイ</button>
+  <div id="tab-bar">
+    <button id="tab-btn-video" class="tab-btn">🎬 再生</button>
+    <button id="tab-btn-list" class="tab-btn">📋 一覧・設定</button>
   </div>
 
-  <div id="slot-bar"></div>
+  <div id="list-view">
+    <div id="mode-bar">
+      <button id="btn-mode-toggle">モード: リプレイ</button>
+    </div>
 
-  <div class="list-toggle-row">
-    <button id="btn-toggle-saved">保存済み一覧を表示 (0件)</button>
-    <button id="btn-edit-saved" class="edit-btn">編集</button>
-  </div>
-  <div id="saved-bar" class="list-bar"></div>
-  <div id="saved-delete-row" class="list-delete-row">
-    <button id="btn-delete-saved">選択した保存済みクリップを削除</button>
+    <div id="slot-bar"></div>
+
+    <div class="list-toggle-row">
+      <button id="btn-toggle-saved">保存済み一覧を表示 (0件)</button>
+      <button id="btn-edit-saved" class="edit-btn">編集</button>
+    </div>
+    <div id="saved-bar" class="list-bar"></div>
+    <div id="saved-delete-row" class="list-delete-row">
+      <button id="btn-delete-saved">選択した保存済みクリップを削除</button>
+    </div>
+
+    <div class="list-toggle-row">
+      <button id="btn-toggle-takes">テイク一覧を表示 (0件)</button>
+      <button id="btn-edit-takes" class="edit-btn">編集</button>
+    </div>
+    <div id="takes-bar" class="list-bar"></div>
+    <div id="takes-delete-row" class="list-delete-row">
+      <button id="btn-delete-takes">選択したテイクを削除</button>
+    </div>
   </div>
 
-  <div class="list-toggle-row">
-    <button id="btn-toggle-takes">テイク一覧を表示 (0件)</button>
-    <button id="btn-edit-takes" class="edit-btn">編集</button>
-  </div>
-  <div id="takes-bar" class="list-bar"></div>
-  <div id="takes-delete-row" class="list-delete-row">
-    <button id="btn-delete-takes">選択したテイクを削除</button>
-  </div>
+  <div id="video-view">
+    <div id="video-area">
+      <div id="placeholder">クリップを選択してください</div>
+      <video id="player" playsinline muted></video>
+    </div>
 
-  <div id="video-area">
-    <div id="placeholder">クリップを選択してください</div>
-    <video id="player" playsinline muted></video>
-  </div>
+    <div id="swipe-hint">動画エリアを左右にスワイプ → コマ送り</div>
 
-  <div id="swipe-hint">動画エリアを左右にスワイプ → コマ送り</div>
-
-  <div id="controls">
-    <button class="ctrl-btn" id="btn-prev">⏮</button>
-    <button class="ctrl-btn" id="btn-play">▶</button>
-    <button class="ctrl-btn" id="btn-next">⏭</button>
-    <button id="btn-save">★ このクリップを保存</button>
+    <div id="controls">
+      <button class="ctrl-btn" id="btn-prev">⏮</button>
+      <button class="ctrl-btn" id="btn-play">▶</button>
+      <button class="ctrl-btn" id="btn-next">⏭</button>
+      <button id="btn-save">★ このクリップを保存</button>
+    </div>
+    <div id="frame-info">-- / --</div>
   </div>
-  <div id="frame-info">-- / --</div>
 
 <script>
 const FPS = 60;
@@ -175,6 +200,22 @@ const btnPlay = document.getElementById('btn-play');
 const videoArea = document.getElementById('video-area');
 const btnSave = document.getElementById('btn-save');
 const btnModeToggle = document.getElementById('btn-mode-toggle');
+const tabBtnVideo = document.getElementById('tab-btn-video');
+const tabBtnList = document.getElementById('tab-btn-list');
+const listView = document.getElementById('list-view');
+const videoView = document.getElementById('video-view');
+
+function setTab(tab) {
+  const showVideo = tab === 'video';
+  videoView.classList.toggle('active', showVideo);
+  listView.classList.toggle('active', !showVideo);
+  tabBtnVideo.classList.toggle('active', showVideo);
+  tabBtnList.classList.toggle('active', !showVideo);
+}
+
+tabBtnVideo.onclick = () => setTab('video');
+tabBtnList.onclick = () => setTab('list');
+setTab('list'); // 起動直後はまだ再生するクリップが無いので一覧タブから始める
 
 let currentClips = [];
 let isPlaying = false;
@@ -207,6 +248,8 @@ function loadClip(filename, btn, srcPrefix) {
   btnSave.classList.toggle('show', srcPrefix === '/clips/');
   btnSave.disabled = false;
   btnSave.textContent = '★ このクリップを保存';
+
+  setTab('video'); // クリップを選ぶと自動的に再生タブへ切り替え、大きく表示する
 }
 
 async function refreshClips() {
