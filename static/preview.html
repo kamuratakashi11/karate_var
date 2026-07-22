@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>空手 BAR カメラプレビュー</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; background: #111; color: #eee;
+    font-family: -apple-system, "Hiragino Sans", sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  #info {
+    text-align: center; padding: 10px; font-size: 14px; color: #aaa;
+    background: #1c1c1c;
+  }
+  #preview-area {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    background: #000; overflow: hidden;
+  }
+  #preview-img { max-width: 100%; max-height: 100%; display: none; }
+  #placeholder { color: #666; font-size: 18px; }
+  #status {
+    text-align: center; padding: 8px; font-size: 12px; color: #666;
+    background: #1c1c1c;
+  }
+</style>
+</head>
+<body>
+
+  <div id="info">カメラのセッティング確認用プレビューです(録画・クリップ生成には影響しません)</div>
+
+  <div id="preview-area">
+    <div id="placeholder">映像を取得中...</div>
+    <img id="preview-img" alt="プレビュー">
+  </div>
+
+  <div id="status">-</div>
+
+<script>
+const img = document.getElementById('preview-img');
+const placeholder = document.getElementById('placeholder');
+const status = document.getElementById('status');
+const POLL_INTERVAL_MS = 400;
+
+let frameCount = 0;
+let windowStart = Date.now();
+let consecutiveErrors = 0;
+
+function refresh() {
+  const url = '/api/preview.jpg?t=' + Date.now();
+  const tester = new Image();
+  tester.onload = () => {
+    img.src = tester.src;
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+    consecutiveErrors = 0;
+
+    frameCount++;
+    const now = Date.now();
+    const elapsed = (now - windowStart) / 1000;
+    if (elapsed > 2) {
+      status.textContent = `更新中(約 ${(frameCount / elapsed).toFixed(1)} 回/秒)`;
+      frameCount = 0;
+      windowStart = now;
+    }
+  };
+  tester.onerror = () => {
+    consecutiveErrors++;
+    if (consecutiveErrors >= 3) {
+      status.textContent = '映像を取得できません(録画が開始されているか確認してください)';
+    }
+  };
+  tester.src = url;
+}
+
+refresh();
+setInterval(refresh, POLL_INTERVAL_MS);
+</script>
+</body>
+</html>

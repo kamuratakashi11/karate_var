@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from abc import ABC, abstractmethod
 
-from config import FRAME_WIDTH, FRAME_HEIGHT, FPS
+from config import FRAME_WIDTH, FRAME_HEIGHT, FPS, AUTOFOCUS_ENABLED, MANUAL_FOCUS_VALUE
 
 
 class VideoSource(ABC):
@@ -54,6 +54,14 @@ class RealCameraSource(VideoSource):
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
         self.cap.set(cv2.CAP_PROP_FPS, FPS)
 
+        # オートフォーカスが試合中に迷って画面がぼやけるのを防ぐための設定。
+        # .set()が実際に効くかはカメラ・バックエンド依存のため、必ず.get()で
+        # 読み戻して実際の値をログに出す(fpsと同じ理由。要求値と実際の値が
+        # 一致するとは限らない)。
+        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if AUTOFOCUS_ENABLED else 0)
+        if not AUTOFOCUS_ENABLED and MANUAL_FOCUS_VALUE is not None:
+            self.cap.set(cv2.CAP_PROP_FOCUS, MANUAL_FOCUS_VALUE)
+
         if not self.cap.isOpened():
             raise RuntimeError(f"カメラ(index={self.device_index})を開けませんでした")
 
@@ -61,6 +69,11 @@ class RealCameraSource(VideoSource):
         actual_h = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
         print(f"[RealCameraSource] 実際の設定値: {actual_w}x{actual_h} @ {actual_fps}fps")
+
+        actual_autofocus = self.cap.get(cv2.CAP_PROP_AUTOFOCUS)
+        actual_focus = self.cap.get(cv2.CAP_PROP_FOCUS)
+        print(f"[RealCameraSource] オートフォーカス: {actual_autofocus} "
+              f"(要求値: {1 if AUTOFOCUS_ENABLED else 0})  フォーカス値: {actual_focus}")
 
     def read(self):
         ok, frame = self.cap.read()

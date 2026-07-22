@@ -3,19 +3,26 @@
 
 iPad(またはPC自身のブラウザ)からLAN経由で以下にアクセスできるようにする:
   GET /                  監査用画面(index.html)
-  GET /api/clips         現在保持中のクリップ一覧(JSON)
+  GET /api/clips         現在保持中のクリップ一覧(JSON。試合番号付き)
   GET /clips/<filename>  クリップ動画本体(mp4)
   GET /api/status        カメラ警告状態(録画が止まっていないか)
   POST /api/clips/<filename>/save  指定クリップを永久保存(FIFO対象外)にする
-  GET /api/saved         永久保存済みクリップ一覧(JSON)
+  GET /api/saved         永久保存済みクリップ一覧(JSON。試合番号付き)
   GET /saved/<filename>  永久保存済みクリップ動画本体(mp4)
+  GET /api/match/current 現在の試合番号
+  POST /api/match/next   試合番号を1つ進める(「次の試合へ」ボタン用)
+  POST /api/clips/clear  ライブクリップを一括削除(保存済みには影響しない)
+  GET /preview           カメラのセッティング確認用ライブプレビュー画面
+  GET /api/preview.jpg   直近1フレームのJPEG(プレビュー画面がポーリングする)
 
 「やめ」操作自体はPC側の記録員が行うため、iPad側には
 クリップを追加・削除するAPIは設けない(閲覧専用)。ただし
-「このクリップを永久保存する」操作だけは、良いプレイを消さずに
-残したいという運用上の要望のため例外的に認めている
+「このクリップを永久保存する」操作と、「試合の切り替え」「ライブ
+クリップの一括削除」だけは、良いプレイを消さずに残しつつ、試合ごとに
+整理していきたいという運用上の要望のため例外的に認めている
 (FIFOで削除される data/clips/ から data/saved/ へのコピーのみで、
-既存クリップの削除・上書きは一切行わない)。
+既存クリップの削除・上書きは一切行わない。一括削除は data/clips/ の
+ライブクリップのみが対象で、data/saved/ には一切影響しない)。
 """
 
 import logging
@@ -75,10 +82,11 @@ def api_clips():
     # 新しい順に並べて返す(監査画面では最新を上に出す)
     result = [
         {
-            "filename": os.path.basename(p),
-            "label": os.path.basename(p).replace("bar_clip_", "").replace(".mp4", ""),
+            "filename": os.path.basename(c["path"]),
+            "label": os.path.basename(c["path"]).replace("bar_clip_", "").replace(".mp4", ""),
+            "match": c["match"],
         }
-        for p in reversed(clips)
+        for c in reversed(clips)
     ]
     return jsonify(result)
 
@@ -90,12 +98,13 @@ def clip_file(filename):
 
 @app.route("/api/clips/<path:filename>/save", methods=["POST"])
 def api_save_clip(filename):
+    match = _clip_extractor.get_match_for_clip(filename) if _clip_extractor else None
     try:
-        entry = saved_clips.save_clip(filename)
+        entry = saved_clips.save_clip(filename, match=match)
     except FileNotFoundError as e:
         return jsonify({"ok": False, "error": str(e)}), 404
     audit_log.log_event("clip_saved", original_clip=entry["original_clip"],
-                         saved_filename=entry["filename"])
+                         saved_filename=entry["filename"], match=match)
     return jsonify({"ok": True, **entry})
 
 
@@ -107,6 +116,50 @@ def api_saved():
 @app.route("/saved/<path:filename>")
 def saved_file(filename):
     return send_from_directory(SAVED_DIR, filename)
+
+
+@app.route("/api/match/current")
+def api_match_current():
+    if _clip_extractor is None:
+        return jsonify({"match": None})
+    return jsonify({"match": _clip_extractor.get_current_match()})
+
+
+@app.route("/api/match/next", methods=["POST"])
+def api_match_next():
+    if _clip_extractor is None:
+        return jsonify({"ok": False, "error": "not ready"}), 503
+    new_match = _clip_extractor.next_match()
+    audit_log.log_event("match_advanced", match=new_match)
+    return jsonify({"ok": True, "match": new_match})
+
+
+@app.route("/api/clips/clear", methods=["POST"])
+def api_clips_clear():
+    if _clip_extractor is None:
+        return jsonify({"ok": False, "error": "not ready"}), 503
+    count = _clip_extractor.clear_all()
+    audit_log.log_event("clips_cleared", count=count)
+    return jsonify({"ok": True, "cleared": count})
+
+
+@app.route("/preview")
+def preview_page():
+    return render_template("preview.html")
+
+
+@app.route("/api/preview.jpg")
+def api_preview():
+    if _recorder is None:
+        return "録画エンジンが準備できていません", 503
+    jpeg = _recorder.get_latest_frame_jpeg()
+    if jpeg is None:
+        return "まだ映像を取得できていません", 503
+    response = app.response_class(jpeg, mimetype="image/jpeg")
+    # 常に最新のフレームを取得させたいので、ブラウザ・中間キャッシュどちらにも
+    # キャッシュさせない
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/api/status")

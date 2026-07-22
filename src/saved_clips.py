@@ -33,13 +33,15 @@ def _ascii_court_slug(text):
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
 
 
-def save_clip(source_filename):
+def save_clip(source_filename, match=None):
     """
     data/clips/<source_filename> を data/saved/ へコピーし、永久保存する。
 
     source_filename: クリップのファイル名のみ(パスは含まない想定)。
                       ディレクトリトラバーサル対策として basename 化した上で
                       CLIPS_DIR 直下に実在するファイルであることを確認する。
+    match: そのクリップが属する試合番号(ClipExtractor.get_match_for_clipで
+           引いた値をそのまま渡す想定)。分からない場合はNoneのままでよい。
 
     戻り値: 保存したクリップのメタ情報(dict)
     例外: FileNotFoundError (元クリップが既に存在しない場合。
@@ -64,6 +66,7 @@ def save_clip(source_filename):
         "court": COURT_NAME,
         "filename": saved_filename,
         "original_clip": source_filename,
+        "match": match,
     }
     with _index_lock:
         with open(SAVED_INDEX_PATH, "a", encoding="utf-8") as f:

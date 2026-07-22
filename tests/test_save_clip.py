@@ -14,6 +14,10 @@ import sys
 import time
 import urllib.request
 
+# このテストは「FIFOで元クリップが消えても保存済みコピーは残る」ことを
+# 検証するため、少ない回数の「やめ」で確実にFIFOが働くよう明示的に固定する
+# (既定値はラウンド4で20に引き上げ済み)。
+os.environ["CLIP_SLOTS"] = "2"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from camera_source import MockCameraSource

@@ -24,31 +24,52 @@
   #sync-bar.running { display: block; background: #7a1f1f; color: #fff; }
   #sync-bar.stopped { display: block; background: #1f5c2e; color: #fff; }
 
+  #match-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 10px 0;
+    background: #1c1c1c; flex-shrink: 0;
+  }
+  #match-label { font-weight: bold; font-size: 15px; }
+  #btn-next-match {
+    background: #2a2a2a; color: #ccc; border: 1px solid #444;
+    border-radius: 6px; padding: 8px 12px; font-size: 13px;
+  }
+  #btn-clear-clips {
+    background: #5c1f1f; color: #fff; border: 1px solid #8a2f2f;
+    border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-left: auto;
+  }
+  #link-preview {
+    color: #8ab4f8; font-size: 13px; text-decoration: none;
+    padding: 8px 4px; white-space: nowrap;
+  }
+
   #slot-bar {
-    display: flex; gap: 8px; padding: 10px; background: #1c1c1c;
-    overflow-x: auto;
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; background: #1c1c1c;
+    flex-shrink: 0;
   }
   .slot-btn {
     flex: 0 0 auto; padding: 14px 20px; background: #333; color: #eee;
     border: 2px solid #444; border-radius: 8px; font-size: 16px;
   }
   .slot-btn.active { background: #2a6fdb; border-color: #4a8fff; }
+  .match-header {
+    flex-basis: 100%; color: #888; font-size: 12px; padding: 4px 2px 0;
+  }
 
   #saved-toggle-row {
-    display: flex; padding: 0 10px 10px; background: #1c1c1c;
+    display: flex; padding: 0 10px 10px; background: #1c1c1c; flex-shrink: 0;
   }
   #btn-toggle-saved {
     background: #2a2a2a; color: #ccc; border: 1px solid #444;
     border-radius: 6px; padding: 8px 14px; font-size: 14px;
   }
   #saved-bar {
-    display: none; gap: 8px; padding: 0 10px 10px; background: #1c1c1c;
-    overflow-x: auto;
+    display: none; flex-wrap: wrap; gap: 8px; padding: 0 10px 10px; background: #1c1c1c;
+    flex-shrink: 0;
   }
   #saved-bar.show { display: flex; }
   .saved-btn {
-    flex: 0 0 auto; padding: 12px 16px; background: #2a3a2a; color: #eee;
-    border: 2px solid #3a5a3a; border-radius: 8px; font-size: 14px;
+    flex: 0 0 auto; padding: 10px 14px; background: #2a3a2a; color: #eee;
+    border: 2px solid #3a5a3a; border-radius: 8px; font-size: 13px;
   }
   .saved-btn.active { background: #1f7a3a; border-color: #2fae55; }
   #saved-empty {
@@ -91,6 +112,13 @@
   <div id="warning-bar"></div>
   <div id="sync-bar"></div>
 
+  <div id="match-row">
+    <span id="match-label">試合 -</span>
+    <button id="btn-next-match">次の試合へ →</button>
+    <button id="btn-clear-clips">ライブ一括削除</button>
+    <a id="link-preview" href="/preview" target="_blank">📷 カメラプレビュー</a>
+  </div>
+
   <div id="slot-bar"></div>
 
   <div id="saved-toggle-row">
@@ -128,6 +156,9 @@ const videoArea = document.getElementById('video-area');
 const btnSave = document.getElementById('btn-save');
 const btnToggleSaved = document.getElementById('btn-toggle-saved');
 const savedBar = document.getElementById('saved-bar');
+const matchLabel = document.getElementById('match-label');
+const btnNextMatch = document.getElementById('btn-next-match');
+const btnClearClips = document.getElementById('btn-clear-clips');
 
 let currentClips = [];
 let isPlaying = false;
@@ -168,7 +199,15 @@ async function refreshClips() {
     const clips = await res.json();
     currentClips = clips;
     slotBar.innerHTML = '';
+    let lastMatch = null;
     clips.forEach((c, i) => {
+      if (c.match !== lastMatch) {
+        const header = document.createElement('div');
+        header.className = 'match-header';
+        header.textContent = `試合 ${c.match}`;
+        slotBar.appendChild(header);
+        lastMatch = c.match;
+      }
       const btn = document.createElement('button');
       btn.className = 'slot-btn';
       btn.textContent = (i === 0 ? '最新: ' : '') + c.label;
@@ -179,6 +218,36 @@ async function refreshClips() {
     console.error(e);
   }
 }
+
+async function refreshMatch() {
+  try {
+    const res = await fetch('/api/match/current');
+    const data = await res.json();
+    matchLabel.textContent = data.match != null ? `試合 ${data.match}` : '試合 -';
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+btnNextMatch.onclick = async () => {
+  try {
+    await fetch('/api/match/next', { method: 'POST' });
+    await refreshMatch();
+    await refreshClips();
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+btnClearClips.onclick = async () => {
+  if (!confirm('現在のライブクリップをすべて削除します(保存済みクリップは削除されません)。よろしいですか?')) return;
+  try {
+    await fetch('/api/clips/clear', { method: 'POST' });
+    await refreshClips();
+  } catch (e) {
+    console.error(e);
+  }
+};
 
 async function refreshSaved() {
   try {
@@ -202,11 +271,22 @@ function renderSavedBar() {
     savedBar.appendChild(empty);
     return;
   }
+  let lastMatch = null;
   savedList.forEach((s) => {
+    if (s.match !== lastMatch) {
+      const header = document.createElement('div');
+      header.className = 'match-header';
+      header.textContent = s.match != null ? `試合 ${s.match}` : '試合 不明';
+      savedBar.appendChild(header);
+      lastMatch = s.match;
+    }
     const btn = document.createElement('button');
     btn.className = 'saved-btn';
     if (s.filename === currentFilename && currentIsSaved) btn.classList.add('active');
-    btn.textContent = `${s.saved_at} (${s.court})`;
+    // saved_at は "YYYY-MM-DD HH:MM:SS" 形式。ボタン幅を抑えるため月日+時刻だけ表示する
+    const shortDate = s.saved_at.slice(5, 10).replace('-', '/');
+    const shortTime = s.saved_at.slice(11, 16);
+    btn.textContent = `${shortDate} ${shortTime} (${s.court})`;
     btn.onclick = () => loadClip(s.filename, btn, true);
     savedBar.appendChild(btn);
   });
@@ -351,9 +431,11 @@ window.addEventListener('mouseup', () => { mouseDown = false; });
 refreshClips();
 refreshStatus();
 refreshSaved();
+refreshMatch();
 setInterval(refreshClips, 3000);
 setInterval(refreshStatus, 2000);
 setInterval(refreshSaved, 5000);
+setInterval(refreshMatch, 3000);
 </script>
 </body>
 </html>

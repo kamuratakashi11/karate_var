@@ -27,10 +27,13 @@ import subprocess
 import threading
 import time
 
+import cv2
+
 from config import (
     FRAME_WIDTH, FRAME_HEIGHT, FPS,
     SEGMENT_SECONDS, BUFFER_SEGMENTS, BUFFER_DIR,
     FFMPEG_PRESET, FFMPEG_CRF, HEALTH_STALE_THRESHOLD_SEC,
+    PREVIEW_JPEG_QUALITY,
 )
 from shared_lock import buffer_lock
 
@@ -50,6 +53,11 @@ class SegmentRingBufferRecorder:
         self._start_time = None
         self._last_frame_time = None
         self._frame_count = 0
+        # カメラのセッティング確認用プレビュー(/preview)のために、直近1フレームだけ
+        # メモリ上に保持しておく。録画用にffmpegへ渡すのとは別経路の読み取り専用コピーで、
+        # 録画のパイプライン(_capture_loop → ffmpeg stdin)には一切影響しない。
+        self._latest_frame_lock = threading.Lock()
+        self._latest_frame = None
 
     def get_health(self):
         """中央監視ダッシュボード向けの死活情報を返す"""
@@ -63,6 +71,20 @@ class SegmentRingBufferRecorder:
             "uptime_sec": round(uptime, 1),
             "frame_count": self._frame_count,
         }
+
+    def get_latest_frame_jpeg(self):
+        """
+        カメラのセッティング確認用プレビュー(/preview)向けに、直近1フレームを
+        JPEGにエンコードして返す。まだフレームが1枚も来ていなければNone。
+        """
+        with self._latest_frame_lock:
+            frame = self._latest_frame
+        if frame is None:
+            return None
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, PREVIEW_JPEG_QUALITY])
+        if not ok:
+            return None
+        return buf.tobytes()
 
     def start(self):
         self.source.start()
@@ -117,6 +139,8 @@ class SegmentRingBufferRecorder:
             fail_count = 0
             self._last_frame_time = time.time()
             self._frame_count += 1
+            with self._latest_frame_lock:
+                self._latest_frame = frame
             try:
                 self._ffmpeg_proc.stdin.write(frame.tobytes())
             except (BrokenPipeError, ValueError):

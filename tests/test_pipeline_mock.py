@@ -3,14 +3,16 @@
 MockCameraSourceで疑似映像を流しながら、
   1. リングバッファ録画が正常に走るか
   2. 「やめ」操作(extract_on_yame)で本当に約6秒のクリップが切り出されるか
-  3. 2枠FIFOで正しく上書きされるか
-を確認する。
+  3. FIFOで正しく上書きされるか(このテストではCLIP_SLOTS=2の場合を明示的に検証する。
+     既定値はラウンド4で20に引き上げたが、FIFOの仕組み自体は変わっていないため、
+     環境変数で小さい値に固定して同じロジックを検証する)
 """
 
 import os
 import sys
 import time
 
+os.environ["CLIP_SLOTS"] = "2"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from camera_source import MockCameraSource
@@ -62,8 +64,8 @@ def main():
     print("\n--- 現在保持中のクリップ一覧(2枠のはず) ---")
     current = extractor.list_current_clips()
     for c in current:
-        exists = os.path.exists(c)
-        print(f"  {c}  (存在: {exists})")
+        exists = os.path.exists(c["path"])
+        print(f"  {c['path']} (試合{c['match']})  (存在: {exists})")
 
     print(f"\n保持枠数: {len(current)} (期待値: 2)")
     print(f"クリップ1は削除されているべき: {'OK' if not os.path.exists(clip1) else 'NG(まだ存在)'}")

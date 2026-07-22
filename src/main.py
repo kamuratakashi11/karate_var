@@ -6,6 +6,7 @@
 - 記録員の「やめ」操作を受け付ける
   --input-mode enter  : キーボードのEnterキーで代用(動作確認・単体テスト用)
   --input-mode button : 業者のUSB早押しボタン(キーボード入力として認識)を監視
+- 「次の試合へ」操作(キーボードのNキー)を、入力モードに関係なく常時受け付ける
 
 使い方:
   カメラ未着手時: python3 main.py --mock
@@ -86,6 +87,8 @@ def main():
     # 大きな警告として出す。
     if _wait_for_web_server(args.port):
         print(f"[main] 監査画面: http://<このPCのIPアドレス>:{args.port}/ にiPadからアクセスしてください")
+        print(f"[main] カメラプレビュー(セッティング確認用): "
+              f"http://<このPCのIPアドレス>:{args.port}/preview")
     else:
         message = (f"監査Webサーバー(ポート{args.port})の起動を確認できませんでした。"
                     "ポートの競合・ファイアウォール等が原因の可能性があります。"
@@ -105,6 +108,20 @@ def main():
 
     def on_key_event(event_type, state):
         audit_log.log_event(event_type, timer_state=state)
+
+    def trigger_next_match():
+        new_match = extractor.next_match()
+        print(f"[試合] 次の試合へ: 試合{new_match}")
+        audit_log.log_event("match_advanced", match=new_match)
+
+    from key_listener import NextMatchKeyListener
+    next_match_listener = NextMatchKeyListener(on_next_match=trigger_next_match)
+    try:
+        next_match_listener.start()
+        print("[main] 「次の試合へ」キー: N (監査画面のボタンと同じ動作)")
+    except RuntimeError as e:
+        print(f"[エラー] 「次の試合へ」キーの監視を開始できませんでした: {e}")
+        next_match_listener = None
 
     button_listener = None
     if args.input_mode == "button":
@@ -131,8 +148,14 @@ def main():
     try:
         if args.input_mode == "enter":
             while True:
-                input()
-                trigger_yame()
+                line = input()
+                # 何も入力せずEnterのみ = 「やめ」。Nキーを押すと、その文字が
+                # このinput()のバッファに残ったままEnter待ちになることがあるが、
+                # Nキー自体はNextMatchKeyListenerが別途(押した瞬間に)処理済みなので、
+                # ここで空でない入力まで「やめ」として扱うと二重発火してしまう。
+                # そのため、本当に何も入力しなかった場合だけ「やめ」を発火する。
+                if line.strip() == "":
+                    trigger_yame()
         else:
             # ボタン監視は別スレッドで動いているので、メインスレッドは待機するだけ
             while True:
@@ -143,6 +166,8 @@ def main():
         print("\n[main] 終了処理中...")
         if button_listener:
             button_listener.stop()
+        if next_match_listener:
+            next_match_listener.stop()
         recorder.stop()
         audit_log.log_event("system_stop")
         print("[main] 終了しました")
