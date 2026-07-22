@@ -168,7 +168,9 @@ def main():
             args.input_mode = "enter"
 
     if args.input_mode == "enter":
-        print("[main] 記録員操作: Enterキーで『やめ』(直近6秒を確定クリップとして保存)")
+        print("[main] 記録員操作: Enterキーで『やめ』(直近10秒を確定クリップとして保存)")
+        print("[main] テイクモード中は、Enterキーがスタート/ストップのトグルとして動作します"
+              "(1回目=スタート、2回目=ストップ。物理ボタン無しでもテイクモードを試せます)")
 
     print("[main] 終了: Ctrl+C")
 
@@ -176,7 +178,14 @@ def main():
         if args.input_mode == "enter":
             while True:
                 input()
-                trigger_yame()
+                if recording_mode.get_mode() == recording_mode.TAKE:
+                    if take_recorder.is_in_progress():
+                        trigger_yame()
+                    else:
+                        start_take()
+                        print("[main] Enter検知: テイク開始(次のEnterでストップ)")
+                else:
+                    trigger_yame()
         else:
             # ボタン監視は別スレッドで動いているので、メインスレッドは待機するだけ
             while True:
