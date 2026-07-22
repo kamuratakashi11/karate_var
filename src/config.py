@@ -53,6 +53,16 @@ CLIP_PROTECTION_RUNNING_SECONDS = 2.0
 # 際限なく溜まり続けないよう、上限時間で自動的にストップ扱いにする。
 TAKE_MAX_DURATION_SECONDS = 600.0  # 10分(想定5分程度に対して十分な安全マージン)
 
+# --- 音声設定 ---
+# 映像に加えてマイク音声も録りたい場合、Windowsが認識しているマイクの
+# デバイス名をここに設定する(例: "マイク配列 (Realtek(R) Audio)")。
+# 確認方法: PowerShellで `ffmpeg -list_devices true -f dshow -i dummy` を
+# 実行すると、認識されているビデオ・オーディオデバイス名の一覧が表示される。
+# カメラのデバイス番号やBUTTON_KEY_NAME同様、PCごとに実機で確認が必要な値。
+# None のままだと音声は無効(従来通り映像のみを録画する)。
+AUDIO_DEVICE_NAME = None
+AUDIO_BITRATE = "128k"
+
 # --- ディレクトリ設定 ---
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

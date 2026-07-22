@@ -98,6 +98,40 @@ python3 main.py --camera 0
 必ず確認してください。720p/60fpsで取得できていない場合、カメラ機種の
 対応状況を再確認する必要があります。
 
+## 音声の追加(任意)
+
+既定では映像のみを録画しますが、マイク音声も一緒に録りたい場合は
+`src/config.py` の `AUDIO_DEVICE_NAME` を設定します(Windows専用機能)。
+
+1. PowerShellで、認識されているマイクのデバイス名を確認する
+
+   ```powershell
+   ffmpeg -list_devices true -f dshow -i dummy
+   ```
+
+   出力の「DirectShow audio devices」の欄に表示された名前(例:
+   `"マイク配列 (Realtek(R) Audio)"`)をそのまま使います。
+
+2. `src/config.py` の `AUDIO_DEVICE_NAME` にその名前を設定する
+
+   ```python
+   AUDIO_DEVICE_NAME = "マイク配列 (Realtek(R) Audio)"
+   ```
+
+   `BUTTON_KEY_NAME`やカメラのデバイス番号と同様、**PCごとに実機で確認が
+   必要な値**です。`None`のままなら音声は無効(従来通り映像のみ)です。
+
+3. 起動して1本クリップを作り、`ffprobe`で音声トラックが含まれているか確認する
+
+   ```powershell
+   ffprobe -v error -show_entries stream=codec_type -of default=noprint_wrappers=1 <クリップのパス>
+   ```
+
+   `codec_type=video` と `codec_type=audio` の両方が表示されればOKです。
+   最後にブラウザで実際に再生し、音が聞こえるか・映像とズレていないかも
+   確認してください(特にテイクモードのような数分間の録画で確認するのが
+   望ましいです)。
+
 ## 大会当日の運用
 
 1. PCを起動し、USBカメラを接続してから `python3 main.py --camera 0` を実行
@@ -265,6 +299,7 @@ karate_bar/
     test_save_clip.py       永久保存機能の確認
     test_take_mode.py       テイクモード(通し録画)の確認
     test_mode_api.py        モード切替・一括削除APIの確認
+    test_ffmpeg_cmd.py      録画コマンド組み立て(音声追加時の分岐含む)の確認
   data/
     buffer/                 常時録画のリングバッファ(自動で古いものが削除される)
     clips/                   確定済みクリップ(直近2回分のみ保持、リプレイモード)
