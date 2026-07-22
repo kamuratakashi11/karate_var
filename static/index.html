@@ -550,7 +550,7 @@ const modeBar = document.getElementById('mode-bar');
 let isHost = false; // /api/statusで確定するまでは非表示側に倒しておく
 
 function updateModeButton() {
-  modeBar.style.display = isHost ? '' : 'none';
+  modeBar.style.display = isHost ? 'block' : 'none';
   if (!isHost) return;
   btnModeToggle.textContent = 'モード: ' + (currentMode === 'take' ? 'テイク' : 'リプレイ');
   btnModeToggle.classList.toggle('take', currentMode === 'take');
