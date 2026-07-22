@@ -59,10 +59,19 @@
     overflow-x: auto; flex-shrink: 0;
   }
   .slot-btn {
-    flex: 0 0 auto; padding: 14px 20px; background: #333; color: #eee;
+    flex: 0 0 auto; padding: 10px 20px; background: #333; color: #eee;
     border: 2px solid #444; border-radius: 8px; font-size: 16px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
   }
   .slot-btn.active { background: #2a6fdb; border-color: #4a8fff; }
+
+  /* リプレイ/テイクどちらが元になっているクリップかを一目で分かるようにする小さいタグ */
+  .mode-tag {
+    font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 10px;
+    line-height: 1.6;
+  }
+  .mode-tag-replay { background: #1f3a5c; color: #8fc2ff; }
+  .mode-tag-take { background: #5a3a1f; color: #ffbf7f; }
 
   .list-toggle-row {
     display: flex; gap: 8px; padding: 0 10px 10px; background: #1c1c1c;
@@ -79,8 +88,9 @@
   }
   .list-bar.show { display: flex; }
   .list-btn {
-    flex: 0 0 auto; padding: 12px 16px; background: #2a3a2a; color: #eee;
+    flex: 0 0 auto; padding: 8px 16px; background: #2a3a2a; color: #eee;
     border: 2px solid #3a5a3a; border-radius: 8px; font-size: 14px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
   }
   .list-btn.active { background: #1f7a3a; border-color: #2fae55; }
   .edit-row {
@@ -252,6 +262,13 @@ function loadClip(filename, btn, srcPrefix) {
   setTab('video'); // クリップを選ぶと自動的に再生タブへ切り替え、大きく表示する
 }
 
+function makeModeTag(mode) {
+  const tag = document.createElement('span');
+  tag.className = mode === 'take' ? 'mode-tag mode-tag-take' : 'mode-tag mode-tag-replay';
+  tag.textContent = mode === 'take' ? 'テイク' : 'リプレイ';
+  return tag;
+}
+
 async function refreshClips() {
   try {
     const res = await fetch('/api/clips');
@@ -261,7 +278,10 @@ async function refreshClips() {
     clips.forEach((c, i) => {
       const btn = document.createElement('button');
       btn.className = 'slot-btn';
-      btn.textContent = (i === 0 ? '最新: ' : '') + c.label;
+      btn.appendChild(makeModeTag('replay'));
+      const label = document.createElement('span');
+      label.textContent = (i === 0 ? '最新: ' : '') + c.label;
+      btn.appendChild(label);
       btn.onclick = () => loadClip(c.filename, btn, '/clips/');
       slotBar.appendChild(btn);
     });
@@ -294,7 +314,7 @@ btnSave.onclick = async () => {
 
 // --- 保存済み一覧・テイク一覧の表示/編集/一括削除(共通ロジック) ---
 function makeManagedList(opts) {
-  const { listUrl, deleteUrl, srcPrefix, toggleBtn, editBtn, barEl, deleteRow, deleteBtn, emptyText, formatLabel } = opts;
+  const { listUrl, deleteUrl, srcPrefix, toggleBtn, editBtn, barEl, deleteRow, deleteBtn, emptyText, formatLabel, originMode } = opts;
   let items = [];
   let visible = false;
   let editing = false;
@@ -326,16 +346,20 @@ function makeManagedList(opts) {
           if (cb.checked) selected.add(key); else selected.delete(key);
           deleteBtn.disabled = selected.size === 0;
         };
+        row.appendChild(cb);
+        row.appendChild(makeModeTag(originMode));
         const span = document.createElement('span');
         span.textContent = formatLabel(item);
-        row.appendChild(cb);
         row.appendChild(span);
         barEl.appendChild(row);
       } else {
         const btn = document.createElement('button');
         btn.className = 'list-btn';
         if (key === currentFilename && currentSrcPrefix === srcPrefix) btn.classList.add('active');
-        btn.textContent = formatLabel(item);
+        btn.appendChild(makeModeTag(originMode));
+        const label = document.createElement('span');
+        label.textContent = formatLabel(item);
+        btn.appendChild(label);
         btn.onclick = () => loadClip(key, btn, srcPrefix);
         barEl.appendChild(btn);
       }
@@ -423,6 +447,7 @@ const savedList = makeManagedList({
   deleteBtn: document.getElementById('btn-delete-saved'),
   emptyText: 'まだ保存済みクリップはありません',
   formatLabel: (s) => `${s.saved_at} (${s.court})`,
+  originMode: 'replay', // 保存済みクリップは現状すべてリプレイモードのクリップが元になっている
 });
 
 const takesList = makeManagedList({
@@ -436,6 +461,7 @@ const takesList = makeManagedList({
   deleteBtn: document.getElementById('btn-delete-takes'),
   emptyText: 'まだテイクはありません',
   formatLabel: (t) => `${t.taken_at} (${t.court}, ${Math.round(t.duration_sec)}秒)`,
+  originMode: 'take',
 });
 
 // --- モード切り替え(単一トグルボタン。タップごとにreplay⇄takeが切り替わる) ---
