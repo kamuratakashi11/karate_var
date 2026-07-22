@@ -67,7 +67,7 @@ TAKE_MAX_DURATION_SECONDS = 600.0  # 10分(想定5分程度に対して十分な
 # 実行すると、認識されているビデオ・オーディオデバイス名の一覧が表示される。
 # カメラのデバイス番号やBUTTON_KEY_NAME同様、PCごとに実機で確認が必要な値。
 # None のままだと音声は無効(従来通り映像のみを録画する)。
-AUDIO_DEVICE_NAME = None
+AUDIO_DEVICE_NAME = "マイク (C922 Pro Stream Webcam)"
 AUDIO_BITRATE = "128k"
 
 # --- ディレクトリ設定 ---
