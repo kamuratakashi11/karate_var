@@ -53,7 +53,9 @@
   #list-view.active { display: block; flex: 1; min-height: 0; overflow-y: auto; }
   #video-view.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
-  #mode-bar { padding: 8px 10px 0; background: #1c1c1c; flex-shrink: 0; }
+  /* 既定は非表示。録画PC自身のブラウザからのアクセスと確認できてから
+     JS側でdisplayを戻す(iPad等では誤操作防止のため常に非表示のまま)。 */
+  #mode-bar { padding: 8px 10px 0; background: #1c1c1c; flex-shrink: 0; display: none; }
   #btn-mode-toggle {
     width: 100%; padding: 12px; font-size: 15px; font-weight: bold;
     border-radius: 8px; border: 2px solid #444; background: #2a2a2a; color: #eee;
@@ -124,6 +126,16 @@
   #player { max-width: 100%; max-height: 100%; }
   #placeholder { color: #666; font-size: 20px; }
 
+  /* スマホ縦持ちだと動画エリアが細長くなり見づらいため、動画自体を
+     ネイティブのフルスクリーン表示に切り替えられるボタンを重ねて置く。 */
+  #btn-fullscreen {
+    position: absolute; top: 10px; right: 10px; z-index: 2;
+    background: rgba(0,0,0,0.55); color: #fff; border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 6px; width: 40px; height: 40px; font-size: 18px;
+    display: none;
+  }
+  #btn-fullscreen.show { display: block; }
+
   /* テイクなど数分単位の長い動画で、任意の時間へすぐジャンプできるようにする
      シークバー。コマ送り(スワイプ)は微調整用、こちらは大まかな移動用。 */
   #seek-bar { padding: 6px 12px 0; background: #1c1c1c; flex-shrink: 0; }
@@ -131,8 +143,8 @@
 
   #controls {
     background: #1c1c1c; padding: 14px; display: flex;
-    align-items: center; justify-content: center; gap: 20px;
-    flex-shrink: 0;
+    align-items: center; justify-content: center; gap: 12px 16px;
+    flex-shrink: 0; flex-wrap: wrap;
   }
   .ctrl-btn {
     background: #2a2a2a; color: #eee; border: 1px solid #444;
@@ -145,6 +157,14 @@
   }
   #btn-save.show { display: inline-block; }
   #btn-save:disabled { opacity: 0.6; }
+  /* 「保存」はコート側(サーバー)への永久保存、こちらは閲覧中の端末自体への
+     ダウンロード。生徒が自分のiPad/スマホに持ち帰りたい用途向け。 */
+  #btn-download {
+    background: #1f3a5c; color: #fff; border: 1px solid #2a6fdb;
+    border-radius: 8px; padding: 0 18px; height: 56px; font-size: 15px;
+    display: none;
+  }
+  #btn-download.show { display: inline-block; }
   #frame-info {
     font-size: 15px; color: #aaa; min-width: 160px; text-align: center;
     flex-shrink: 0;
@@ -195,6 +215,7 @@
     <div id="video-area">
       <div id="placeholder">クリップを選択してください</div>
       <video id="player" playsinline></video>
+      <button id="btn-fullscreen" title="フルスクリーン">⛶</button>
     </div>
 
     <div id="seek-bar">
@@ -207,6 +228,7 @@
       <button class="ctrl-btn" id="btn-prev">⏮</button>
       <button class="ctrl-btn" id="btn-play">▶</button>
       <button class="ctrl-btn" id="btn-next">⏭</button>
+      <button id="btn-download">⬇️ 端末に保存</button>
       <button id="btn-save">★ このクリップを保存</button>
     </div>
     <div id="frame-info">-- / --</div>
@@ -225,6 +247,8 @@ const frameInfo = document.getElementById('frame-info');
 const btnPlay = document.getElementById('btn-play');
 const videoArea = document.getElementById('video-area');
 const btnSave = document.getElementById('btn-save');
+const btnDownload = document.getElementById('btn-download');
+const btnFullscreen = document.getElementById('btn-fullscreen');
 const seekSlider = document.getElementById('seek-slider');
 const btnModeToggle = document.getElementById('btn-mode-toggle');
 const tabBtnVideo = document.getElementById('tab-btn-video');
@@ -282,6 +306,9 @@ function loadClip(filename, btn, srcPrefix) {
   btnSave.classList.toggle('show', srcPrefix === '/clips/');
   btnSave.disabled = false;
   btnSave.textContent = '★ このクリップを保存';
+  // 「端末に保存」(ダウンロード)・フルスクリーンは種類を問わずいつでも使える
+  btnDownload.classList.add('show');
+  btnFullscreen.classList.add('show');
 
   setTab('video'); // クリップを選ぶと自動的に再生タブへ切り替え、大きく表示する
 }
@@ -333,6 +360,30 @@ btnSave.onclick = async () => {
     btnSave.textContent = '✗ 保存失敗';
     btnSave.disabled = false;
     console.error(e);
+  }
+};
+
+// 「端末に保存」: サーバー側(コート共有)への保存とは別に、今見ている端末
+// (生徒個人のiPad/スマホ等)自体にダウンロードする。サーバー側の状態には
+// 一切影響しない、閲覧中のブラウザだけで完結する操作。
+btnDownload.onclick = () => {
+  if (!currentFilename || !currentSrcPrefix) return;
+  const a = document.createElement('a');
+  a.href = currentSrcPrefix + currentFilename;
+  a.download = currentFilename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
+
+// --- フルスクリーン ---
+btnFullscreen.onclick = () => {
+  if (player.requestFullscreen) {
+    player.requestFullscreen();
+  } else if (player.webkitEnterFullscreen) {
+    player.webkitEnterFullscreen(); // iOS Safariのネイティブ動画フルスクリーン
+  } else if (player.webkitRequestFullscreen) {
+    player.webkitRequestFullscreen();
   }
 };
 
@@ -447,6 +498,8 @@ function makeManagedList(opts) {
         player.style.display = 'none';
         placeholder.style.display = 'block';
         btnSave.classList.remove('show');
+        btnDownload.classList.remove('show');
+        btnFullscreen.classList.remove('show');
       }
       selected.clear();
       editing = false;
@@ -489,7 +542,16 @@ const takesList = makeManagedList({
 });
 
 // --- モード切り替え(単一トグルボタン。タップごとにreplay⇄takeが切り替わる) ---
+// 誤操作による録画事故を避けるため、録画PC自身のブラウザ(127.0.0.1)からの
+// アクセス時のみ表示する(iPad等LAN経由の監査端末には表示しない)。
+// サーバー側(/api/mode POST)でも同じ制限を行っているので、これは
+// あくまでUI上の分かりやすさのためのもの。
+const modeBar = document.getElementById('mode-bar');
+let isHost = false; // /api/statusで確定するまでは非表示側に倒しておく
+
 function updateModeButton() {
+  modeBar.style.display = isHost ? '' : 'none';
+  if (!isHost) return;
   btnModeToggle.textContent = 'モード: ' + (currentMode === 'take' ? 'テイク' : 'リプレイ');
   btnModeToggle.classList.toggle('take', currentMode === 'take');
   btnModeToggle.disabled = isRunning;
@@ -544,6 +606,7 @@ async function refreshStatus() {
     if (status.mode) {
       currentMode = status.mode;
     }
+    isHost = !!status.is_host;
     updateModeButton();
   } catch (e) {
     console.error(e);
