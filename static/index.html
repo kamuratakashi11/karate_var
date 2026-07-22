@@ -10,21 +10,27 @@
     margin: 0; padding: 0; background: #111; color: #eee;
     font-family: -apple-system, "Hiragino Sans", sans-serif;
     height: 100vh; display: flex; flex-direction: column;
+    overflow-y: auto; /* 全項目が画面に収まりきらない場合はページ全体をスクロール可能にする */
   }
+  /* ヘッダー系の各バーは、縦幅が足りない時にflexboxで押しつぶされて
+     文字が見切れることがないよう、常に自然な高さを保つ(縮まない)ようにする。
+     画面が足りない分は#video-area(動画エリア)側だけが縮む。 */
   #warning-bar {
     background: #c0392b; color: #fff; text-align: center;
     padding: 10px; font-weight: bold; display: none;
+    flex-shrink: 0;
   }
   #warning-bar.show { display: block; }
 
   #sync-bar {
     text-align: center; padding: 8px; font-size: 14px; font-weight: bold;
     display: none;
+    flex-shrink: 0;
   }
   #sync-bar.running { display: block; background: #7a1f1f; color: #fff; }
   #sync-bar.stopped { display: block; background: #1f5c2e; color: #fff; }
 
-  #mode-bar { padding: 8px 10px 0; background: #1c1c1c; }
+  #mode-bar { padding: 8px 10px 0; background: #1c1c1c; flex-shrink: 0; }
   #btn-mode-toggle {
     width: 100%; padding: 12px; font-size: 15px; font-weight: bold;
     border-radius: 8px; border: 2px solid #444; background: #2a2a2a; color: #eee;
@@ -34,7 +40,7 @@
 
   #slot-bar {
     display: flex; gap: 8px; padding: 10px; background: #1c1c1c;
-    overflow-x: auto;
+    overflow-x: auto; flex-shrink: 0;
   }
   .slot-btn {
     flex: 0 0 auto; padding: 14px 20px; background: #333; color: #eee;
@@ -44,7 +50,7 @@
 
   .list-toggle-row {
     display: flex; gap: 8px; padding: 0 10px 10px; background: #1c1c1c;
-    align-items: center;
+    align-items: center; flex-shrink: 0;
   }
   .list-toggle-row button {
     background: #2a2a2a; color: #ccc; border: 1px solid #444;
@@ -53,6 +59,7 @@
   .edit-btn.active { background: #5a2a2a; border-color: #a33; color: #fff; }
   .list-bar {
     display: none; flex-wrap: wrap; gap: 8px; padding: 0 10px 10px; background: #1c1c1c;
+    flex-shrink: 0;
   }
   .list-bar.show { display: flex; }
   .list-btn {
@@ -68,6 +75,7 @@
   .list-empty { color: #666; font-size: 13px; padding: 4px 4px; }
   .list-delete-row {
     display: none; padding: 0 10px 10px; background: #1c1c1c;
+    flex-shrink: 0;
   }
   .list-delete-row.show { display: block; }
   .list-delete-row button {
@@ -77,7 +85,7 @@
   .list-delete-row button:disabled { opacity: 0.5; }
 
   #video-area {
-    flex: 1; display: flex; align-items: center; justify-content: center;
+    flex: 1; min-height: 80px; display: flex; align-items: center; justify-content: center;
     position: relative; background: #000; touch-action: none;
   }
   #player { max-width: 100%; max-height: 100%; }
@@ -86,6 +94,7 @@
   #controls {
     background: #1c1c1c; padding: 14px; display: flex;
     align-items: center; justify-content: center; gap: 20px;
+    flex-shrink: 0;
   }
   .ctrl-btn {
     background: #2a2a2a; color: #eee; border: 1px solid #444;
@@ -100,10 +109,11 @@
   #btn-save:disabled { opacity: 0.6; }
   #frame-info {
     font-size: 15px; color: #aaa; min-width: 160px; text-align: center;
+    flex-shrink: 0;
   }
   #swipe-hint {
     text-align: center; color: #555; font-size: 13px; padding: 6px;
-    background: #1c1c1c;
+    background: #1c1c1c; flex-shrink: 0;
   }
 </style>
 </head>
