@@ -41,6 +41,11 @@ from config import (
 )
 from shared_lock import buffer_lock
 
+# _capture_loop()が実時間に追いつくために1回の読み取りあたり書き込む
+# 複製フレームの上限。エンコーダーが遅れている状況で無制限に複製すると
+# さらに詰まらせてしまうため、じわじわ追いつく程度に抑える。
+MAX_FRAME_CATCHUP_PER_READ = 3
+
 
 def _build_ffmpeg_cmd(segment_pattern, audio_device_name=None):
     """
@@ -195,8 +200,18 @@ class SegmentRingBufferRecorder:
             # フレーム数」を計算し、届くまで直前のフレームを複製して書き込む
             # ことで、常に実時間どおりのフレーム数を録画に反映する
             # (CFR変換の標準的な手法)。
+            #
+            # ただし、ボトルネックがカメラではなくエンコーダー側(ffmpegの
+            # H.264エンコードが実時間に追いつかない)場合、一度に大量の
+            # 複製フレームを書き込もうとすると、ただでさえ遅れている
+            # エンコーダーにさらに負荷をかけて悪化させてしまう(実機検証で、
+            # 音声は正確な長さなのに映像だけ短くなる=エンコード側が
+            # 追いつけていない事象を確認した)。そのため1回の読み取りあたり
+            # 追いつく量に上限を設け、じわじわ追いつく方式にする。
             target_frames = int((self._last_frame_time - capture_start) * FPS) + 1
-            while frames_written < target_frames and self._running:
+            catchup_limit = frames_written + MAX_FRAME_CATCHUP_PER_READ
+            frames_to_write = min(target_frames, catchup_limit)
+            while frames_written < frames_to_write and self._running:
                 try:
                     self._ffmpeg_proc.stdin.write(last_frame.tobytes())
                 except (BrokenPipeError, ValueError):
