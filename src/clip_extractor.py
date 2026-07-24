@@ -53,6 +53,19 @@ import audit_log
 _clip_id_counter = itertools.count()
 
 
+def _run_ffmpeg(cmd):
+    """
+    ffmpegを実行し、失敗時はstderrの内容を含めて例外を出す。
+    従来はstderr=subprocess.DEVNULLで握りつぶしていたため、失敗時に
+    「exit status N」としか分からず原因調査ができなかった。
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg失敗(exit {result.returncode}): {result.stderr.strip()[-2000:]}"
+        )
+
+
 class ClipExtractor:
     def __init__(self, running_counter_fn=None):
         """
@@ -168,7 +181,11 @@ class ClipExtractor:
                 candidates = segments[:-1] if exclude_anchor else segments
 
             # 直近何秒分をカバーするのに必要な個数か(安全マージンとして+2)。
-            needed = int(CLIP_DURATION_SECONDS // SEGMENT_SECONDS) + 2
+            # exclude_anchor時は最新セグメント1本を失う上に、残りのセグメント
+            # 数・音声データ量が少なくなりすぎると音声コーデックパラメータの
+            # 判定に失敗しやすくなるため、安全マージンを+3にして補う。
+            margin = 3 if exclude_anchor else 2
+            needed = int(CLIP_DURATION_SECONDS // SEGMENT_SECONDS) + margin
             recent = candidates[-needed:]
 
             if not recent:
@@ -180,10 +197,17 @@ class ClipExtractor:
                     f.write(f"file '{os.path.abspath(seg)}'\n")
 
             # 再エンコードなしで結合(高速・劣化なし)。
-            subprocess.run(
-                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_path,
-                 "-c", "copy", combined_path],
-                check=True, stderr=subprocess.DEVNULL,
+            # 音声有効時、セグメントによっては映像・音声が内部的に2組
+            # 宣言されてしまうことがある(録画側の癖で原因未特定)ため、
+            # 暗黙の"-map 0"に頼らず映像・音声とも明示的に先頭ストリームを
+            # 指定する(音声が無い構成でも失敗しないよう"?"で任意指定)。
+            # また音声(AAC)のコーデックパラメータ判定に必要な事前読み込み量が
+            # 既定値だと足りないことがあるため、probesize/analyzedurationを
+            # 増やして確実に判定させる。
+            _run_ffmpeg(
+                ["ffmpeg", "-y", "-probesize", "50M", "-analyzeduration", "100M",
+                 "-f", "concat", "-safe", "0", "-i", concat_path,
+                 "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", combined_path]
             )
             # ここから先はcombined_pathという独立したファイルだけを使うので、
             # 元のセグメントファイル群には依存しない。ロックはここで解放してよい。
@@ -194,11 +218,15 @@ class ClipExtractor:
         duration = self._probe_duration(combined_path)
         start = max(0.0, duration - CLIP_DURATION_SECONDS)
 
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", combined_path,
-             "-t", f"{CLIP_DURATION_SECONDS:.3f}", "-c", "copy",
-             "-movflags", "+faststart", final_path],
-            check=True, stderr=subprocess.DEVNULL,
+        # 結合ステップと同じ理由(音声コーデックパラメータの判定不足)で
+        # このトリム側の読み込みでも失敗することがあるため、同様に
+        # probesize/analyzedurationを増やす。
+        _run_ffmpeg(
+            ["ffmpeg", "-y", "-probesize", "50M", "-analyzeduration", "100M",
+             "-ss", f"{start:.3f}", "-i", combined_path,
+             "-t", f"{CLIP_DURATION_SECONDS:.3f}",
+             "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+             "-movflags", "+faststart", final_path]
         )
 
         os.remove(concat_path)
@@ -252,9 +280,22 @@ class ClipExtractor:
 
     @staticmethod
     def _probe_duration(path):
+        """
+        映像ストリーム自身の長さを返す。format=durationだと音声・映像の
+        どちらかが少しでも長ければコンテナ全体としてその長い方の値になり、
+        映像ストリームが実際にはそれより短い場合、切り出し開始位置の計算
+        (duration - CLIP_DURATION_SECONDS)が実際の映像の終端より後ろに
+        ズレて、要求した秒数ぶんの映像を確保できなくなる(実機検証で、
+        音声は正確な10秒なのに映像だけ短くなる事象が発生していた)。
+        必ず映像ストリーム自身の長さを基準にする。
+        """
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", path],
             capture_output=True, text=True, check=True,
         )
-        return float(result.stdout.strip())
+        # 録画側の癖で映像ストリームが内部的に2組宣言されることがあり、
+        # その場合ここも同じ値が複数行出力される。値自体は同一なので
+        # 最初の1行だけを使う。
+        return float(result.stdout.strip().splitlines()[0])
