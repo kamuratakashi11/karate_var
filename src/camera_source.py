@@ -9,12 +9,21 @@ MockCameraSource : カメラなしでパイプライン全体(録画バッファ
                    目視・自動の両方で検証できる。
 """
 
+import os
+
+# OpenCVのMSMF(Media Foundation)バックエンドは、初期化時にハードウェアの
+# 変換器(MFT)を列挙する処理があり、一部のPCではこれが極端に遅くなる
+# (実機で、VideoCapture openと各cap.set()にそれぞれ約66秒、合計約4.5分
+# かかる事象を確認した)。この環境変数でHW変換器の列挙を無効化すると
+# 初期化が大幅に高速化する。必ずcv2をimportする前に設定する必要がある。
+os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+
 import time
 import cv2
 import numpy as np
 from abc import ABC, abstractmethod
 
-from config import FRAME_WIDTH, FRAME_HEIGHT, FPS
+from config import FRAME_WIDTH, FRAME_HEIGHT, FPS, CAMERA_BACKEND
 
 
 class VideoSource(ABC):
@@ -40,19 +49,33 @@ class RealCameraSource(VideoSource):
         self.cap = None
 
     def start(self):
-        # 実機検証の結果、Windows既定のCAP_DSHOWでは
-        # FOURCC(MJPG)の設定順序に関わらず60fps要求時に実質25〜30fps程度
-        # しか配信されないことが判明した(720pの非圧縮モードにフォールバック
-        # している可能性が高い)。CAP_MSMFバックエンドで、かつFOURCCを
-        # 解像度/fpsより先に設定することで実測60fps付近が安定して得られる
-        # ことを確認済みのため、この順序・バックエンドを採用する。
-        self.cap = cv2.VideoCapture(
-            self.device_index, cv2.CAP_MSMF if _is_windows() else 0
-        )
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-        self.cap.set(cv2.CAP_PROP_FPS, FPS)
+        # バックエンドはPCによって最適な方が異なるためconfig.pyで切替可能に
+        # している(CAMERA_BACKEND)。
+        # ・あるPC: CAP_DSHOWだと60fps要求時に実質25〜30fpsしか出ず、CAP_MSMFが
+        #   必要だった。
+        # ・別のノートPC: CAP_MSMFは1操作あたり約66秒(合計約4.5分)かかり
+        #   起動が実用にならず、CAP_DSHOWなら約3秒で起動できた。
+        #
+        # FOURCC(MJPG)を設定する順序がバックエンドで逆になる点に注意
+        # (実機のtools/diag_dshow_modes.pyで確認):
+        # ・MSMF: FOURCCを解像度/fpsより「先」に設定しないとMJPGにならない。
+        # ・DSHOW: FOURCCを解像度/fps設定の「後」に設定しないとMJPGにならず、
+        #   YUY2非圧縮(720pではUSB帯域限界で約10fps)にフォールバックする。
+        # MJPGにならないと720p60は帯域的に出せないため、この順序は重要。
+        backend = self._backend_flag()
+        self.cap = cv2.VideoCapture(self.device_index, backend)
+        mjpg = cv2.VideoWriter_fourcc(*"MJPG")
+
+        if backend == cv2.CAP_DSHOW:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+            self.cap.set(cv2.CAP_PROP_FPS, FPS)
+            self.cap.set(cv2.CAP_PROP_FOURCC, mjpg)
+        else:
+            self.cap.set(cv2.CAP_PROP_FOURCC, mjpg)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+            self.cap.set(cv2.CAP_PROP_FPS, FPS)
 
         if not self.cap.isOpened():
             raise RuntimeError(f"カメラ(index={self.device_index})を開けませんでした")
@@ -61,6 +84,17 @@ class RealCameraSource(VideoSource):
         actual_h = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
         print(f"[RealCameraSource] 実際の設定値: {actual_w}x{actual_h} @ {actual_fps}fps")
+
+    @staticmethod
+    def _backend_flag():
+        """config.CAMERA_BACKENDに応じたOpenCVのバックエンド定数を返す。
+        Windows以外では常に既定(0)。"""
+        if not _is_windows():
+            return 0
+        backend = (CAMERA_BACKEND or "msmf").strip().lower()
+        if backend == "dshow":
+            return cv2.CAP_DSHOW
+        return cv2.CAP_MSMF
 
     def read(self):
         ok, frame = self.cap.read()

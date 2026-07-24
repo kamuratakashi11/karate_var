@@ -36,6 +36,19 @@ _take_id_counter = itertools.count()
 _index_lock = threading.Lock()
 
 
+def _run_ffmpeg(cmd):
+    """
+    ffmpegを実行し、失敗時はstderrの内容を含めて例外を出す。
+    従来はstderr=subprocess.DEVNULLで握りつぶしていたため、失敗時に
+    「exit status N」としか分からず原因調査ができなかった。
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg失敗(exit {result.returncode}): {result.stderr.strip()[-2000:]}"
+        )
+
+
 def _ascii_court_slug(text):
     """saved_clips.py と同じ考え方: ファイル名(=URLパスの一部)には
     日本語を含みうるCOURT_NAMEをそのまま使わず、ASCII専用のハッシュにする。
@@ -141,7 +154,11 @@ class TakeRecorder:
             # 経過時間をカバーするのに必要な個数(安全マージンとして+2)。
             # cleanup_loopはstart_take()時点からpause_cleanup()で止まっている前提なので、
             # 区間全体のセグメントがまだ残っているはず。
-            needed = int(elapsed // SEGMENT_SECONDS) + 2
+            # exclude_anchor時は最新セグメント1本を失う上に、短いテイクだと
+            # 残りのセグメント数・音声データ量が少なくなりすぎて音声コーデック
+            # パラメータの判定に失敗しやすくなるため、安全マージンを+3にする。
+            margin = 3 if exclude_anchor else 2
+            needed = int(elapsed // SEGMENT_SECONDS) + margin
             recent = candidates[-needed:]
 
             if not recent:
@@ -151,20 +168,27 @@ class TakeRecorder:
                 for seg in recent:
                     f.write(f"file '{os.path.abspath(seg)}'\n")
 
-            subprocess.run(
-                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_path,
-                 "-c", "copy", combined_path],
-                check=True, stderr=subprocess.DEVNULL,
+            # 音声有効時、暗黙の"-map 0"だと多数セグメント結合時にストリーム
+            # 選択が混乱し音声が丸ごと欠落することがあるため映像・音声を明示
+            # 指定する。またprobesize/analyzedurationを増やして音声コーデック
+            # パラメータの判定失敗("unspecified sample rate")を防ぐ。
+            _run_ffmpeg(
+                ["ffmpeg", "-y", "-probesize", "50M", "-analyzeduration", "100M",
+                 "-f", "concat", "-safe", "0", "-i", concat_path,
+                 "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", combined_path]
             )
 
         duration = self._probe_duration(combined_path)
         start = max(0.0, duration - elapsed)
 
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", combined_path,
-             "-t", f"{elapsed:.3f}", "-c", "copy",
-             "-movflags", "+faststart", final_path],
-            check=True, stderr=subprocess.DEVNULL,
+        # 結合ステップと同じ理由でトリム側にもprobesize/analyzeduration・
+        # 明示mapを適用する。
+        _run_ffmpeg(
+            ["ffmpeg", "-y", "-probesize", "50M", "-analyzeduration", "100M",
+             "-ss", f"{start:.3f}", "-i", combined_path,
+             "-t", f"{elapsed:.3f}",
+             "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+             "-movflags", "+faststart", final_path]
         )
 
         os.remove(concat_path)
@@ -196,12 +220,20 @@ class TakeRecorder:
 
     @staticmethod
     def _probe_duration(path):
+        """
+        映像ストリーム自身の長さを返す。format=durationだと音声・映像の
+        長い方に引っ張られ、映像側が実際にはそれより短い場合、切り出し
+        開始位置がズレて要求秒数ぶんの映像を確保できなくなるため。
+        録画側の癖で映像ストリームが複数行出力されることがあるので
+        最初の1行だけを使う。
+        """
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", path],
             capture_output=True, text=True, check=True,
         )
-        return float(result.stdout.strip())
+        return float(result.stdout.strip().splitlines()[0])
 
 
 def list_takes():

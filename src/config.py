@@ -15,6 +15,18 @@ FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 FPS = 60
 
+# 実カメラのバックエンド(Windowsのみ影響。PCによって最適な方が異なる)。
+#   "msmf"  : Media Foundation。PCによっては初期化が数十秒〜数分かかることが
+#             あるが、その場合は環境変数
+#             OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS=0(camera_source.pyで
+#             自動設定済み)で大幅に高速化する。逆にDSHOWだと60fpsが出ない
+#             PCもある。
+#   "dshow" : DirectShow。初期化が速いが、PC/カメラによっては60fpsが出ない
+#             (MJPGにならずYUY2非圧縮で約10〜15fpsに落ちる)ことがある。
+# 迷ったら "msmf" のまま。tools/measure_camera_fps.py で実測60fps付近が
+# 安定して出るか確認すること(get()の返り値ではなく実測で判断。ラウンド1参照)。
+CAMERA_BACKEND = os.environ.get("CAMERA_BACKEND", "msmf")
+
 # --- リングバッファ設定 ---
 # ffmpegの segment マルチプレクサで何秒ごとにファイルを区切るか
 SEGMENT_SECONDS = 2
